@@ -59,9 +59,10 @@ public class ProductController {
         return store.addReview(id, req.rating(), req.author(), req.text());
     }
 
+    /** ?refresh=true bypasses the cache (e.g. after a prompt change you want to see immediately). */
     @GetMapping("/{id}/summary")
-    public SummaryResponse summary(@PathVariable long id) {
-        return summaryService.summarize(id);
+    public SummaryResponse summary(@PathVariable long id, @RequestParam(defaultValue = "false") boolean refresh) {
+        return summaryService.summarize(id, refresh);
     }
 
     private void requireProduct(long id) {

@@ -1,8 +1,8 @@
 package com.reviewlens.summary;
 
 import com.reviewlens.llm.LlmException;
-import com.reviewlens.llm.LlmProvider;
 import com.reviewlens.llm.LlmResponse;
+import com.reviewlens.llm.ResilientLlm;
 import com.reviewlens.model.Product;
 import com.reviewlens.model.Review;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,7 +24,8 @@ import java.util.concurrent.Semaphore;
  *   check  - drop quotes that are not grounded in a real review
  *
  * A global semaphore caps concurrent LLM calls across all requests, protecting provider rate limits.
- * Each call gets one repair attempt if the model returns invalid JSON.
+ * Each call gets one repair attempt if the model returns invalid JSON. Transport failures are
+ * retried separately, inside ResilientLlm.
  */
 @Component
 public class Summarizer {
@@ -32,7 +33,7 @@ public class Summarizer {
     public record Result(ReviewSummary summary, GroundingChecker.Result grounding, Usage usage) {
     }
 
-    private final LlmProvider llm;
+    private final ResilientLlm llm;
     private final PromptBuilder prompts;
     private final SummaryParser parser;
     private final GroundingChecker grounding;
@@ -40,7 +41,7 @@ public class Summarizer {
     private final double inputPricePerMillion;
     private final double outputPricePerMillion;
 
-    public Summarizer(LlmProvider llm, PromptBuilder prompts, SummaryParser parser, GroundingChecker grounding,
+    public Summarizer(ResilientLlm llm, PromptBuilder prompts, SummaryParser parser, GroundingChecker grounding,
                       @Value("${reviewlens.llm.max-concurrency}") int maxConcurrency,
                       @Value("${reviewlens.llm.price.input-per-million}") double inputPricePerMillion,
                       @Value("${reviewlens.llm.price.output-per-million}") double outputPricePerMillion) {

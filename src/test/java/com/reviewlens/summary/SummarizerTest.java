@@ -1,13 +1,17 @@
 package com.reviewlens.summary;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.reviewlens.llm.CircuitBreaker;
 import com.reviewlens.llm.LlmProvider;
+import com.reviewlens.llm.ResilientLlm;
 import com.reviewlens.llm.LlmResponse;
 import com.reviewlens.llm.MockLlmProvider;
 import com.reviewlens.model.Product;
 import com.reviewlens.model.Review;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -47,7 +51,9 @@ class SummarizerTest {
     }
 
     private Summarizer summarizer(LlmProvider llm) {
-        return new Summarizer(llm, new PromptBuilder(3000, 1000, 10, json), new SummaryParser(json),
+        ResilientLlm resilient = new ResilientLlm(llm,
+                new CircuitBreaker(100, Duration.ofSeconds(1), Clock.systemUTC()), 1, 0);
+        return new Summarizer(resilient, new PromptBuilder(3000, 1000, 10, json), new SummaryParser(json),
                 new GroundingChecker(), 4, 0.15, 0.60);
     }
 

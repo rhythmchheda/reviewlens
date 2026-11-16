@@ -9,6 +9,8 @@ import java.util.Map;
  * @param stats     computed over the reviews that passed filtering
  * @param rawStats  computed over all reviews, so the effect of filtering is visible
  * @param summary   null when no usable reviews remain
+ * @param cached    served from cache (usage numbers describe the original computation)
+ * @param stale     the LLM failed and this is the last good summary, possibly missing newer reviews
  */
 public record SummaryResponse(long productId,
                               String productName,
@@ -18,7 +20,9 @@ public record SummaryResponse(long productId,
                               ReviewSummary summary,
                               Grounding grounding,
                               Usage usage,
-                              String provider) {
+                              String provider,
+                              boolean cached,
+                              boolean stale) {
 
     public record Filtering(Map<String, Long> counts, List<RejectedReview> rejected) {
     }
@@ -32,5 +36,10 @@ public record SummaryResponse(long productId,
         static Grounding none() {
             return new Grounding(0, 0, List.of());
         }
+    }
+
+    public SummaryResponse withFlags(boolean cached, boolean stale) {
+        return new SummaryResponse(productId, productName, stats, rawStats, filtering, summary, grounding,
+                usage, provider, cached, stale);
     }
 }

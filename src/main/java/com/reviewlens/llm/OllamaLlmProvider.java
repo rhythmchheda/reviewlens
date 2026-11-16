@@ -50,7 +50,7 @@ public class OllamaLlmProvider implements LlmProvider {
                     LlmResponse.intOr(resp, "prompt_eval_count", TokenBudget.estimate(systemPrompt + userPrompt)),
                     LlmResponse.intOr(resp, "eval_count", TokenBudget.estimate(text)));
         } catch (Exception e) {
-            throw new LlmException("Ollama call failed: " + e.getMessage(), e);
+            throw LlmException.from("Ollama", e);
         }
     }
 

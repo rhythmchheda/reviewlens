@@ -14,13 +14,17 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+/** Fast retries, and a breaker that never opens, so failure tests cannot affect each other. */
+@SpringBootTest(properties = {
+        "reviewlens.llm.retry.initial-backoff-ms=1",
+        "reviewlens.llm.circuit.failure-threshold=1000"})
 @AutoConfigureMockMvc
 class ProductApiTest {
 
@@ -133,5 +137,71 @@ class ProductApiTest {
         mvc.perform(get("/products/" + id + "/summary"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.detail").value("Summary provider returned invalid output"));
+        verify(llm, times(2)).complete(anyString(), anyString()); // original + one repair
+    }
+
+    @Test
+    void retriesBeforeReturning502() throws Exception {
+        long id = createProduct("Retried");
+        addReview(id, 5, "a", "Works well");
+        doThrow(new LlmException("boom")).when(llm).complete(anyString(), anyString());
+
+        mvc.perform(get("/products/" + id + "/summary")).andExpect(status().isBadGateway());
+        verify(llm, times(3)).complete(anyString(), anyString()); // max-attempts
+    }
+
+    @Test
+    void secondCallIsServedFromCache() throws Exception {
+        long id = createProduct("Cached");
+        addReview(id, 5, "a", "Works well");
+
+        mvc.perform(get("/products/" + id + "/summary")).andExpect(jsonPath("$.cached").value(false));
+        mvc.perform(get("/products/" + id + "/summary")).andExpect(jsonPath("$.cached").value(true));
+        verify(llm, times(1)).complete(anyString(), anyString());
+    }
+
+    @Test
+    void newReviewInvalidatesCache() throws Exception {
+        long id = createProduct("Invalidated");
+        addReview(id, 5, "a", "Works well");
+        mvc.perform(get("/products/" + id + "/summary"));
+
+        addReview(id, 1, "b", "Broke on day one");
+        mvc.perform(get("/products/" + id + "/summary"))
+                .andExpect(jsonPath("$.cached").value(false))
+                .andExpect(jsonPath("$.stats.count").value(2));
+    }
+
+    @Test
+    void refreshBypassesCache() throws Exception {
+        long id = createProduct("Refreshed");
+        addReview(id, 5, "a", "Works well");
+        mvc.perform(get("/products/" + id + "/summary"));
+        mvc.perform(get("/products/" + id + "/summary?refresh=true")).andExpect(jsonPath("$.cached").value(false));
+        verify(llm, times(2)).complete(anyString(), anyString());
+    }
+
+    @Test
+    void servesStaleSummaryWhenLlmIsDown() throws Exception {
+        long id = createProduct("Degraded");
+        addReview(id, 5, "a", "Works well");
+        mvc.perform(get("/products/" + id + "/summary")).andExpect(status().isOk());
+
+        addReview(id, 2, "b", "Stopped working");
+        doThrow(new LlmException("provider down")).when(llm).complete(anyString(), anyString());
+
+        mvc.perform(get("/products/" + id + "/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stale").value(true))
+                .andExpect(jsonPath("$.stats.count").value(1)); // the old summary, honestly labeled
+    }
+
+    @Test
+    void exposesHealthAndMetrics() throws Exception {
+        mvc.perform(get("/products/1/summary"));
+        mvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.components.llmCircuit.details.circuit").value("CLOSED"));
+        mvc.perform(get("/actuator/metrics/reviewlens.llm.calls")).andExpect(status().isOk());
     }
 }

@@ -54,7 +54,7 @@ public class OpenAiLlmProvider implements LlmProvider {
                     LlmResponse.intOr(usage, "prompt_tokens", TokenBudget.estimate(systemPrompt + userPrompt)),
                     LlmResponse.intOr(usage, "completion_tokens", TokenBudget.estimate(text)));
         } catch (Exception e) {
-            throw new LlmException("OpenAI call failed: " + e.getMessage(), e);
+            throw LlmException.from("OpenAI", e);
         }
     }
 
