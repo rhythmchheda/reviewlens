@@ -6,8 +6,8 @@ package com.reviewlens.llm;
  */
 public interface LlmProvider {
 
-    /** @throws LlmException on any failure (network, auth, bad response). */
-    String complete(String systemPrompt, String userPrompt);
+    /** @throws LlmException on any failure (network, timeout, auth, bad response). */
+    LlmResponse complete(String systemPrompt, String userPrompt);
 
     String name();
 }

@@ -2,6 +2,7 @@ package com.reviewlens;
 
 import com.reviewlens.llm.LlmException;
 import com.reviewlens.llm.LlmProvider;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -29,6 +30,20 @@ class ProductApiTest {
     @MockitoSpyBean
     LlmProvider llm;
 
+    long createProduct(String name) throws Exception {
+        String body = mvc.perform(post("/products").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"" + name + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return Long.parseLong(body.replaceAll(".*\"id\":(\\d+).*", "$1"));
+    }
+
+    void addReview(long id, int rating, String author, String text) throws Exception {
+        mvc.perform(post("/products/" + id + "/reviews").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rating\":" + rating + ",\"author\":\"" + author + "\",\"text\":\"" + text + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
     @Test
     void listsSeededProducts() throws Exception {
         mvc.perform(get("/products"))
@@ -37,38 +52,51 @@ class ProductApiTest {
     }
 
     @Test
-    void createProductAndReviewThenSummarize() throws Exception {
-        String body = mvc.perform(post("/products").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Test Lamp\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        long id = Long.parseLong(body.replaceAll(".*\"id\":(\\d+).*", "$1"));
+    void seededProductFiltersDuplicateSpamAndInjection() throws Exception {
+        mvc.perform(get("/products/1/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rawStats.count").value(7))
+                .andExpect(jsonPath("$.rawStats.averageRating").value(3.57))
+                .andExpect(jsonPath("$.stats.count").value(4))
+                .andExpect(jsonPath("$.stats.averageRating").value(3.5))
+                .andExpect(jsonPath("$.filtering.counts.duplicate").value(1))
+                .andExpect(jsonPath("$.filtering.counts.spam").value(1))
+                .andExpect(jsonPath("$.filtering.counts.injection").value(1))
+                .andExpect(jsonPath("$.grounding.quotesDropped").value(1))
+                .andExpect(jsonPath("$.summary.sentiment").value("mixed"))
+                .andExpect(jsonPath("$.provider").value("mock"));
+    }
 
-        mvc.perform(post("/products/" + id + "/reviews").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"rating\":4,\"author\":\"t\",\"text\":\"Bright and sturdy\"}"))
-                .andExpect(status().isCreated());
-        mvc.perform(post("/products/" + id + "/reviews").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"rating\":2,\"author\":\"u\",\"text\":\"Switch broke\"}"))
-                .andExpect(status().isCreated());
+    @Test
+    void largeProductUsesMapReduce() throws Exception {
+        mvc.perform(get("/products/3/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stats.count").value(24))
+                .andExpect(jsonPath("$.usage.chunks").value(3))
+                .andExpect(jsonPath("$.usage.llmCalls").value(4));
+    }
+
+    @Test
+    void createProductAndReviewThenSummarize() throws Exception {
+        long id = createProduct("Test Lamp");
+        addReview(id, 4, "t", "Bright and sturdy");
+        addReview(id, 2, "u", "Switch broke");
 
         mvc.perform(get("/products/" + id + "/summary"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.stats.count").value(2))
                 .andExpect(jsonPath("$.stats.averageRating").value(3.0))
-                .andExpect(jsonPath("$.reviewsUsed").value(2))
-                .andExpect(jsonPath("$.provider").value("mock"));
+                .andExpect(jsonPath("$.summary.pros[0]").value("Bright and sturdy"))
+                .andExpect(jsonPath("$.summary.cons[0]").value("Switch broke"));
     }
 
     @Test
     void emptyProductDoesNotCallLlm() throws Exception {
-        String body = mvc.perform(post("/products").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Empty\"}"))
-                .andReturn().getResponse().getContentAsString();
-        long id = Long.parseLong(body.replaceAll(".*\"id\":(\\d+).*", "$1"));
-
+        long id = createProduct("Empty");
         mvc.perform(get("/products/" + id + "/summary"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.summary").value("No reviews yet."));
+                .andExpect(jsonPath("$.summary").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.usage.llmCalls").value(0));
         verify(llm, never()).complete(anyString(), anyString());
     }
 
@@ -86,9 +114,24 @@ class ProductApiTest {
 
     @Test
     void llmFailureIs502() throws Exception {
+        long id = createProduct("Flaky");
+        addReview(id, 5, "a", "Works well");
         doThrow(new LlmException("boom")).when(llm).complete(anyString(), anyString());
-        mvc.perform(get("/products/1/summary"))
+
+        mvc.perform(get("/products/" + id + "/summary"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.detail").value("Summary provider unavailable, try again later"));
+    }
+
+    @Test
+    void invalidLlmOutputIs502AfterRepair() throws Exception {
+        long id = createProduct("Chatty");
+        addReview(id, 5, "a", "Works well");
+        org.mockito.Mockito.doReturn(new com.reviewlens.llm.LlmResponse("I think it's great!", 10, 5))
+                .when(llm).complete(anyString(), anyString());
+
+        mvc.perform(get("/products/" + id + "/summary"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.detail").value("Summary provider returned invalid output"));
     }
 }
