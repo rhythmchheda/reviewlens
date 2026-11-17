@@ -25,6 +25,20 @@ curl localhost:8081/actuator/health        # includes LLM circuit-breaker state
 curl localhost:8081/actuator/metrics/reviewlens.llm.tokens
 ```
 
+### Frontend (React)
+
+A React + Vite UI lives in `frontend/`. It needs Node 18+. Keep the backend running, then:
+
+```bash
+cd frontend
+npm install
+npm run dev                 # http://localhost:5173
+```
+
+Vite proxies `/products` and `/actuator` to `http://localhost:8081`, so the backend needs no CORS config. Set `BACKEND_URL` to point elsewhere.
+
+The UI shows what the API does: the summary with sentiment, pros and cons, and clickable quotes that jump to their source review. It also shows which reviews were filtered and why, which quotes the grounding check dropped, ratings before and after filtering, LLM calls, tokens, cost and latency, cached/stale badges and the circuit-breaker state. The "Add a review" form has one-click spam and injection examples so you can watch the filters catch them live. Review text is rendered as plain text, so an injected `</review>` tag is displayed, never interpreted as markup.
+
 ## API
 
 | Method | Path | Notes |
